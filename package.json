@@ -1,11 +1,13 @@
 {
-  "name": "playwright-test",
+  "name": "team-task-manager-api-automation",
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
   "scripts": {
     "test": "playwright test",
     "test:api": "playwright test tests/api",
+    "test:ui": "playwright test --ui",
+    "test:headed": "playwright test --headed",
     "report": "playwright show-report"
   },
   "keywords": [],
