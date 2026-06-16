@@ -1,88 +1,231 @@
-import { test, expect } from "@playwright/test";
-
-import { AuthClient } from "../../../src/api/AuthClient";
-import { AuthResponse } from "../../../src/models/auth/AuthResponse";
-import { ErrorResponse } from "../../../src/models/common/ErrorResponse";
+import { test, expect } from "../../../src/fixtures/apiFixtures";
 import { UserRole } from "../../../src/models/auth/UserRole";
 import { env } from "../../../src/config/env";
+import {
+  assertAuthResponse,
+  assertErrorResponse,
+} from "../../../src/utils/assertions";
+import { LoginRequest } from "../../../src/models/auth/LoginRequests";
 
-test.describe("Authentication - Login", () => {
-  let authClient: AuthClient;
+/**
+ * Authentication - Login endpoint tests
+ *
+ * Covers: happy path, auth failures, input validation, and security edge cases.
+ * All tests are independent — no shared mutable state between cases.
+ */
+test.describe("POST /auth/login", () => {
+  // ─── Happy Path ────────────────────────────────────────────────────────────
 
-  test.beforeEach(async ({ request }) => {
-    authClient = new AuthClient(request);
-  });
+  test.describe("Success cases", () => {
+    test("returns a valid token for a super admin", async ({ authClient }) => {
+      const response = await authClient.login({
+        email: env.superAdminEmail,
+        password: env.superAdminPassword,
+      });
 
-  test("should authenticate valid super admin", async () => {
-    const response = await authClient.login({
-      email: env.testEmail,
-      password: env.testPassword,
+      expect(response.status()).toBe(200);
+
+      const body = await assertAuthResponse(response);
+
+      expect(body.user.email).toBe(env.superAdminEmail);
+      expect(body.user.role).toBe(UserRole.SUPER_ADMIN);
     });
 
-    expect(response.status()).toBe(200);
+    test("returns a valid token for a regular user", async ({ authClient }) => {
+      const response = await authClient.login({
+        email: env.userEmail,
+        password: env.userPassword,
+      });
 
-    const body: AuthResponse = await response.json();
+      expect(response.status()).toBe(200);
 
-    expect(body).toMatchObject({
-      token: expect.any(String),
-      expiresInSeconds: expect.any(Number),
+      const body = await assertAuthResponse(response);
 
-      user: {
-        userId: expect.any(String),
-        firstName: expect.any(String),
-        lastName: expect.any(String),
-        email: env.testEmail,
-        role: UserRole.SUPER_ADMIN,
+      expect(body.user.email).toBe(env.userEmail);
+      expect(body.user.role).toBe(UserRole.USER);
+    });
+
+    test("token meets minimum security length (>= 100 chars)", async ({
+      authClient,
+    }) => {
+      const response = await authClient.login({
+        email: env.superAdminEmail,
+        password: env.superAdminPassword,
+      });
+
+      const body = await assertAuthResponse(response);
+
+      expect(body.token.length).toBeGreaterThanOrEqual(100);
+    });
+
+    test("token expiry is a positive number of seconds", async ({
+      authClient,
+    }) => {
+      const response = await authClient.login({
+        email: env.superAdminEmail,
+        password: env.superAdminPassword,
+      });
+
+      const body = await assertAuthResponse(response);
+
+      expect(body.expiresInSeconds).toBeGreaterThan(0);
+    });
+  });
+
+  // ─── Authentication Failures ────────────────────────────────────────────────
+
+  test.describe("Authentication failures (401)", () => {
+    test("rejects a valid email with wrong password", async ({
+      authClient,
+    }) => {
+      const response = await authClient.login({
+        email: env.userEmail,
+        password: "WrongPassword123!",
+      });
+
+      expect(response.status()).toBe(401);
+
+      const body = await assertErrorResponse(response);
+
+      expect(body.status).toBe(401);
+      expect(body.message).toBeTruthy();
+    });
+
+    test("rejects an unknown email", async ({ authClient }) => {
+      const response = await authClient.login({
+        email: "ghost-user@nonexistent.com",
+        password: env.userPassword,
+      });
+
+      expect(response.status()).toBe(401);
+
+      const body = await assertErrorResponse(response);
+
+      expect(body.status).toBe(401);
+      expect(body.message).toBeTruthy();
+    });
+
+    test("does not leak account existence (same error for wrong password vs unknown email)", async ({
+      authClient,
+    }) => {
+      const [wrongPasswordRes, unknownEmailRes] = await Promise.all([
+        authClient.login({
+          email: env.userEmail,
+          password: "WrongPassword123!",
+        }),
+        authClient.login({
+          email: "ghost-user@nonexistent.com",
+          password: env.userPassword,
+        }),
+      ]);
+
+      expect(wrongPasswordRes.status()).toBe(401);
+      expect(unknownEmailRes.status()).toBe(401);
+
+      const [wrongPasswordBody, unknownEmailBody] = await Promise.all([
+        assertErrorResponse(wrongPasswordRes),
+        assertErrorResponse(unknownEmailRes),
+      ]);
+
+      // API must return the same generic message — no user enumeration
+      expect(wrongPasswordBody.message).toBe(unknownEmailBody.message);
+    });
+  });
+
+  // ─── Input Validation (400) ─────────────────────────────────────────────────
+
+  test.describe("Input validation failures (400)", () => {
+    const invalidPayloads: Array<{
+      label: string;
+      payload: Partial<LoginRequest>;
+    }> = [
+      {
+        label: "empty email and password",
+        payload: { email: "", password: "" },
       },
-    });
+      { label: "missing email field", payload: { password: env.userPassword } },
+      { label: "missing password field", payload: { email: env.userEmail } },
+      {
+        label: "malformed email (no @)",
+        payload: { email: "invalid-email", password: env.userPassword },
+      },
+      {
+        label: "malformed email (no TLD)",
+        payload: { email: "user@nodomain", password: env.userPassword },
+      },
+      {
+        label: "whitespace-only email",
+        payload: { email: "   ", password: env.userPassword },
+      },
+      {
+        label: "whitespace-only password",
+        payload: { email: env.userEmail, password: "   " },
+      },
+      {
+        label: "null email",
+        payload: {
+          email: null as unknown as string,
+          password: env.userPassword,
+        },
+      },
+    ];
 
-    expect(body.token.length).toBeGreaterThan(100);
-    expect(body.expiresInSeconds).toBeGreaterThan(0);
+    for (const { label, payload } of invalidPayloads) {
+      test(`returns 400 for: ${label}`, async ({ authClient }) => {
+        const response = await authClient.login(payload as LoginRequest);
+
+        expect(response.status()).toBe(400);
+      });
+    }
   });
 
-  test("should reject invalid password", async () => {
-    const response = await authClient.login({
-      email: env.testEmail,
-      password: "WrongPassword123!",
+  // ─── Security Edge Cases ────────────────────────────────────────────────────
+
+  test.describe("Security edge cases", () => {
+    test("rejects SQL injection in email field", async ({ authClient }) => {
+      const response = await authClient.login({
+        email: "' OR 1=1; --",
+        password: env.userPassword,
+      });
+
+      expect([400, 401]).toContain(response.status());
     });
 
-    expect(response.status()).toBe(401);
+    test("rejects script injection in email field", async ({ authClient }) => {
+      const response = await authClient.login({
+        email: "<script>alert(1)</script>@test.com",
+        password: env.userPassword,
+      });
 
-    const body: ErrorResponse = await response.json();
-
-    expect(body.status).toBe(401);
-    expect(body.message).toBeTruthy();
-  });
-
-  test("should reject unknown email", async () => {
-    const response = await authClient.login({
-      email: "unknown@test.com",
-      password: env.testPassword,
+      expect([400, 401]).toContain(response.status());
     });
 
-    expect(response.status()).toBe(401);
+    test("response does not expose sensitive fields", async ({
+      authClient,
+    }) => {
+      const response = await authClient.login({
+        email: env.superAdminEmail,
+        password: env.superAdminPassword,
+      });
 
-    const body: ErrorResponse = await response.json();
+      expect(response.status()).toBe(200);
 
-    expect(body.status).toBe(401);
-    expect(body.message).toBeTruthy();
-  });
+      const body = await response.json();
 
-  test("should reject empty credentials", async () => {
-    const response = await authClient.login({
-      email: "",
-      password: "",
+      expect(body).not.toHaveProperty("password");
+      expect(body?.user).not.toHaveProperty("password");
+      expect(body?.user).not.toHaveProperty("passwordHash");
     });
 
-    expect(response.status()).toBe(400);
-  });
+    test("response contains correct Content-Type header", async ({
+      authClient,
+    }) => {
+      const response = await authClient.login({
+        email: env.superAdminEmail,
+        password: env.superAdminPassword,
+      });
 
-  test("should reject invalid email format", async () => {
-    const response = await authClient.login({
-      email: "invalid-email",
-      password: env.testPassword,
+      expect(response.headers()["content-type"]).toContain("application/json");
     });
-
-    expect(response.status()).toBe(400);
   });
 });

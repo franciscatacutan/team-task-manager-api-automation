@@ -11,8 +11,8 @@ test.describe("Authentication - Token Validation", () => {
     const authClient = new AuthClient(request);
 
     const loginResponse = await authClient.login({
-      email: env.testEmail,
-      password: env.testPassword,
+      email: env.userEmail,
+      password: env.userPassword,
     });
 
     const auth: AuthResponse = await loginResponse.json();
