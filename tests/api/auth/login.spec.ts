@@ -1,32 +1,88 @@
 import { test, expect } from "@playwright/test";
+
 import { AuthClient } from "../../../src/api/AuthClient";
 import { AuthResponse } from "../../../src/models/auth/AuthResponse";
-import { env } from "../../../src/config/env";
+import { ErrorResponse } from "../../../src/models/common/ErrorResponse";
 import { UserRole } from "../../../src/models/auth/UserRole";
+import { env } from "../../../src/config/env";
 
-test("should login successfully", async ({ request }) => {
-  const authClient = new AuthClient(request);
+test.describe("Authentication - Login", () => {
+  let authClient: AuthClient;
 
-  const response = await authClient.login({
-    email: env.testEmail,
-    password: env.testPassword,
+  test.beforeEach(async ({ request }) => {
+    authClient = new AuthClient(request);
   });
 
-  expect(response.status()).toBe(200);
+  test("should authenticate valid super admin", async () => {
+    const response = await authClient.login({
+      email: env.testEmail,
+      password: env.testPassword,
+    });
 
-  const body: AuthResponse = await response.json();
+    expect(response.status()).toBe(200);
 
-  expect(body.token).toBeTruthy();
+    const body: AuthResponse = await response.json();
 
-  expect(body.expiresInSeconds).toBeGreaterThan(0);
+    expect(body).toMatchObject({
+      token: expect.any(String),
+      expiresInSeconds: expect.any(Number),
 
-  expect(body.user.userId).toBeTruthy();
+      user: {
+        userId: expect.any(String),
+        firstName: expect.any(String),
+        lastName: expect.any(String),
+        email: env.testEmail,
+        role: UserRole.SUPER_ADMIN,
+      },
+    });
 
-  expect(body.user.email).toBe(env.testEmail);
+    expect(body.token.length).toBeGreaterThan(100);
+    expect(body.expiresInSeconds).toBeGreaterThan(0);
+  });
 
-  expect(body.user.firstName).toBeTruthy();
+  test("should reject invalid password", async () => {
+    const response = await authClient.login({
+      email: env.testEmail,
+      password: "WrongPassword123!",
+    });
 
-  expect(body.user.lastName).toBeTruthy();
+    expect(response.status()).toBe(401);
 
-  expect(body.user.role).toBe(UserRole);
+    const body: ErrorResponse = await response.json();
+
+    expect(body.status).toBe(401);
+    expect(body.message).toBeTruthy();
+  });
+
+  test("should reject unknown email", async () => {
+    const response = await authClient.login({
+      email: "unknown@test.com",
+      password: env.testPassword,
+    });
+
+    expect(response.status()).toBe(401);
+
+    const body: ErrorResponse = await response.json();
+
+    expect(body.status).toBe(401);
+    expect(body.message).toBeTruthy();
+  });
+
+  test("should reject empty credentials", async () => {
+    const response = await authClient.login({
+      email: "",
+      password: "",
+    });
+
+    expect(response.status()).toBe(400);
+  });
+
+  test("should reject invalid email format", async () => {
+    const response = await authClient.login({
+      email: "invalid-email",
+      password: env.testPassword,
+    });
+
+    expect(response.status()).toBe(400);
+  });
 });
