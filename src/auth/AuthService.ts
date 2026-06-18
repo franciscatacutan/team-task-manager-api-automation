@@ -1,6 +1,6 @@
 import { APIRequestContext } from "@playwright/test";
 
-import { AuthClient } from "../api/AuthClient";
+import { AuthClient } from "../api/auth/AuthClient";
 import { AuthResponse } from "../models/auth/AuthResponse";
 import { env } from "../config/env";
 

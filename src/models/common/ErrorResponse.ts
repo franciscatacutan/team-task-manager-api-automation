@@ -1,6 +1,4 @@
 export interface ErrorResponse {
-  timestamp: string;
-
   status: number;
 
   error: string;
@@ -8,4 +6,6 @@ export interface ErrorResponse {
   message: string;
 
   path: string;
+
+  timestamp: string;
 }

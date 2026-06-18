@@ -2,20 +2,6 @@ import { APIResponse, expect } from "@playwright/test";
 import { AuthResponse } from "../models/auth/AuthResponse";
 import { ErrorResponse } from "../models/common/ErrorResponse";
 
-/**
- * Assertion helpers — centralise structural validation so tests
- * only assert on the business-specific values they actually care about.
- *
- * Benefits:
- * - One place to update if the response schema changes.
- * - Tests read at a higher level of abstraction ("assert it's a valid auth response")
- *   rather than repeating `toMatchObject` boilerplate everywhere.
- */
-
-/**
- * Asserts that a response is a valid 200 AuthResponse and returns the parsed body.
- * Guarantees the caller receives a fully-typed, structurally-valid object.
- */
 export async function assertAuthResponse(
   response: APIResponse,
 ): Promise<AuthResponse> {
@@ -35,17 +21,13 @@ export async function assertAuthResponse(
     },
   });
 
-  // Token must be non-empty — a structural guarantee beyond just "any String"
+  expect(typeof body.token).toBe("string");
   expect(body.token.trim().length).toBeGreaterThan(0);
   expect(body.expiresInSeconds).toBeGreaterThan(0);
 
   return body;
 }
 
-/**
- * Asserts that a response body conforms to the ErrorResponse schema
- * and returns the parsed body for further test-specific assertions.
- */
 export async function assertErrorResponse(
   response: APIResponse,
 ): Promise<ErrorResponse> {
@@ -57,6 +39,32 @@ export async function assertErrorResponse(
   });
 
   expect(body.message.trim().length).toBeGreaterThan(0);
+
+  return body;
+}
+
+export async function assertRegisterResponse(
+  response: APIResponse,
+): Promise<AuthResponse> {
+  expect(response.status()).toBe(201);
+
+  const body: AuthResponse = await response.json();
+
+  expect(body).toMatchObject({
+    user: {
+      userId: expect.any(String),
+      firstName: expect.any(String),
+      lastName: expect.any(String),
+      email: expect.any(String),
+      role: expect.any(String),
+    },
+  });
+
+  if (body.token !== undefined) {
+    expect(typeof body.token).toBe("string");
+    expect(body.token.trim().length).toBeGreaterThan(0);
+    expect(body.expiresInSeconds).toBeGreaterThan(0);
+  }
 
   return body;
 }

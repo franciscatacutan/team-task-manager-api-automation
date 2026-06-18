@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 
-import { AuthClient } from "../../../src/api/AuthClient";
+import { AuthClient } from "../../../src/api/auth/AuthClient";
 import { AuthResponse } from "../../../src/models/auth/AuthResponse";
 
 test.describe("Authorization - RBAC", () => {
