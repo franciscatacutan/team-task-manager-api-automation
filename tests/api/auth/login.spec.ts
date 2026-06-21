@@ -5,7 +5,7 @@ import {
   assertAuthResponse,
   assertErrorResponse,
 } from "../../../src/utils/assertions";
-import { LoginRequest } from "../../../src/models/auth/LoginRequests";
+import { LoginRequest } from "../../../src/models/auth/LoginRequest";
 
 /**
  * Authentication - Login endpoint tests
@@ -16,94 +16,89 @@ import { LoginRequest } from "../../../src/models/auth/LoginRequests";
 test.describe("POST /auth/login", () => {
   // ─── Happy Path ────────────────────────────────────────────────────────────
 
-  test.describe("Success cases", () => {
-    test("returns a valid token for a super admin", async ({ authClient }) => {
-      const response = await authClient.login({
-        email: env.superAdminEmail,
-        password: env.superAdminPassword,
+  test.describe("Authentication Success", () => {
+    const loginPayload: Array<{
+      label: string;
+      payload: Partial<LoginRequest>;
+      role: UserRole;
+    }> = [
+      {
+        label: "a super admin",
+        payload: {
+          email: env.superAdminEmail,
+          password: env.superAdminPassword,
+        },
+        role: UserRole.SUPER_ADMIN,
+      },
+      {
+        label: "an admin",
+        payload: {
+          email: env.adminEmail,
+          password: env.adminPassword,
+        },
+        role: UserRole.ADMIN,
+      },
+      {
+        label: "a regular user",
+        payload: {
+          email: env.userEmail,
+          password: env.userPassword,
+        },
+        role: UserRole.USER,
+      },
+    ];
+
+    for (const { label, payload, role } of loginPayload) {
+      test(`returns a valid token for ${label}`, async ({ authClient }) => {
+        const response = await authClient.login(payload as LoginRequest);
+
+        expect(response.status()).toBe(200);
+
+        const body = await assertAuthResponse(response);
+
+        expect(body.user.email).toBe(payload.email);
+        expect(body.user.role).toBe(role);
+        expect(body.token.length).toBeGreaterThanOrEqual(100);
+        expect(body.expiresInSeconds).toBeGreaterThan(0);
       });
-
-      expect(response.status()).toBe(200);
-
-      const body = await assertAuthResponse(response);
-
-      expect(body.user.email).toBe(env.superAdminEmail);
-      expect(body.user.role).toBe(UserRole.SUPER_ADMIN);
-    });
-
-    test("returns a valid token for a regular user", async ({ authClient }) => {
-      const response = await authClient.login({
-        email: env.userEmail,
-        password: env.userPassword,
-      });
-
-      expect(response.status()).toBe(200);
-
-      const body = await assertAuthResponse(response);
-
-      expect(body.user.email).toBe(env.userEmail);
-      expect(body.user.role).toBe(UserRole.USER);
-    });
-
-    test("token meets minimum security length (>= 100 chars)", async ({
-      authClient,
-    }) => {
-      const response = await authClient.login({
-        email: env.superAdminEmail,
-        password: env.superAdminPassword,
-      });
-
-      const body = await assertAuthResponse(response);
-
-      expect(body.token.length).toBeGreaterThanOrEqual(100);
-    });
-
-    test("token expiry is a positive number of seconds", async ({
-      authClient,
-    }) => {
-      const response = await authClient.login({
-        email: env.superAdminEmail,
-        password: env.superAdminPassword,
-      });
-
-      const body = await assertAuthResponse(response);
-
-      expect(body.expiresInSeconds).toBeGreaterThan(0);
-    });
+    }
   });
 
   // ─── Authentication Failures ────────────────────────────────────────────────
 
-  test.describe("Authentication failures (401)", () => {
-    test("rejects a valid email with wrong password", async ({
-      authClient,
-    }) => {
-      const response = await authClient.login({
-        email: env.userEmail,
-        password: "WrongPassword123!",
+  test.describe("Authentication failures", () => {
+    const loginPayload: Array<{
+      label: string;
+      payload: Partial<LoginRequest>;
+    }> = [
+      {
+        label: "a valid email with wrong password",
+        payload: {
+          email: env.userEmail,
+          password: "WrongPassword123!",
+        },
+      },
+      {
+        label: "an unknown email",
+        payload: {
+          email: "ghost-user@nonexistent.com",
+          password: env.userPassword,
+        },
+      },
+    ];
+
+    for (const { label, payload } of loginPayload) {
+      test(`rejects ${label}`, async ({ authClient }) => {
+        const response = await authClient.login(payload as LoginRequest);
+
+        expect(response.status()).toBe(401);
+
+        const body = await assertErrorResponse(response);
+
+        expect(body.status).toBe(401);
+        expect(body.message).toBeTruthy();
       });
-
-      expect(response.status()).toBe(401);
-
-      const body = await assertErrorResponse(response);
-
-      expect(body.status).toBe(401);
-      expect(body.message).toBeTruthy();
-    });
-
-    test("rejects an unknown email", async ({ authClient }) => {
-      const response = await authClient.login({
-        email: "ghost-user@nonexistent.com",
-        password: env.userPassword,
-      });
-
-      expect(response.status()).toBe(401);
-
-      const body = await assertErrorResponse(response);
-
-      expect(body.status).toBe(401);
-      expect(body.message).toBeTruthy();
-    });
+    }
 
     test("does not leak account existence (same error for wrong password vs unknown email)", async ({
       authClient,
@@ -182,23 +177,33 @@ test.describe("POST /auth/login", () => {
   // ─── Security Edge Cases ────────────────────────────────────────────────────
 
   test.describe("Security edge cases", () => {
-    test("rejects SQL injection in email field", async ({ authClient }) => {
-      const response = await authClient.login({
-        email: "' OR 1=1; --",
-        password: env.userPassword,
+    const loginPayload: Array<{
+      label: string;
+      payload: Partial<LoginRequest>;
+    }> = [
+      {
+        label: "script injection in email field",
+        payload: {
+          email: "' OR 1=1; --",
+          password: env.userPassword,
+        },
+      },
+      {
+        label: "does not expose sensitive fields",
+        payload: {
+          email: "<script>alert(1)</script>@test.com",
+          password: env.userPassword,
+        },
+      },
+    ];
+
+    for (const { label, payload } of loginPayload) {
+      test(`rejects ${label}`, async ({ authClient }) => {
+        const response = await authClient.login(payload as LoginRequest);
+
+        expect([400, 401]).toContain(response.status());
       });
-
-      expect([400, 401]).toContain(response.status());
-    });
-
-    test("rejects script injection in email field", async ({ authClient }) => {
-      const response = await authClient.login({
-        email: "<script>alert(1)</script>@test.com",
-        password: env.userPassword,
-      });
-
-      expect([400, 401]).toContain(response.status());
-    });
+    }
 
     test("response does not expose sensitive fields", async ({
       authClient,
